@@ -1186,6 +1186,85 @@ function getFusionMatrixData() {
   async function recordAttendance() {
     const role = localStorage.getItem('fibotic_role') || '';
     const logged = localStorage.getItem('fibotic_logged_in') || '';
+    const userId = localStorage.getItem('fibotic_user_id') || null;
+    
+    let personName = (document.getElementById('personSelect')?.value || '').trim() || logged;
+    const projectName = document.getElementById('projectName')?.value?.trim() || '';
+    const baseDesc = document.getElementById('workDescription')?.value || '';
+    const fusionInfo = typeof getFusionMatrixData === 'function' ? getFusionMatrixData() : "";
+    const finalWorkDesc = baseDesc + fusionInfo;
+    const entryTime = document.getElementById('entryTime')?.value;
+    const exitTime = document.getElementById('exitTime')?.value;
+    const share = !!document.getElementById('shareWithAdmin')?.checked;
+
+    if (!personName || !entryTime || !exitTime) {
+        showMessage('⚠️ لطفاً تمام فیلدها را پر کنید', '#e74c3c');
+        return;
+    }
+
+    const hours = calculateTimeDiff(entryTime, exitTime);
+    const date = new Date().toLocaleDateString('fa-IR');
+    const btn = document.getElementById('saveAttendanceBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        const owner = (role === 'user') ? logged : (role === 'admin' ? 'admin' : personName);
+        const backendId = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+
+        // 🔄 ذخیره در Supabase
+        const { data, error } = await supabase
+            .from('attendance')
+            .insert([{
+                person_name: personName,
+                project_name: projectName,
+                entry_time: entryTime,
+                exit_time: exitTime,
+                work_description: finalWorkDesc,
+                work_hours: hours,
+                date: date,
+                owner: owner,
+                shared: share,
+                backend_id: backendId,
+                timestamp: Date.now(),
+                user_id: userId && userId !== 'admin' ? parseInt(userId) : null
+            }])
+            .select();
+
+        if (error) {
+            console.error('Supabase error:', error);
+            throw error;
+        }
+
+        // 💾 ذخیره محلی برای سازگاری
+        await safeCreate({
+            type: 'attendance',
+            person_name: personName,
+            project_name: projectName,
+            entry_time: entryTime,
+            exit_time: exitTime,
+            work_description: finalWorkDesc,
+            work_hours: hours,
+            date: date,
+            owner: owner,
+            shared: share,
+            timestamp: Date.now(),
+            __backendId: backendId
+        });
+
+        showMessage('✅ ثبت شد', '#27ae60');
+        document.getElementById('workDescription').value = '';
+        document.getElementById('entryTime').value = '';
+        document.getElementById('exitTime').value = '';
+        const matrixContainer = document.getElementById('fusion-matrix-container');
+        if (matrixContainer) matrixContainer.innerHTML = '';
+
+    } catch (e) {
+        console.error('Error:', e);
+        showMessage('❌ خطا در ثبت', '#e74c3c');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
     let personName = (document.getElementById('personSelect')?.value || '').trim() || logged;
     const projectName = document.getElementById('projectName')?.value?.trim() || '';
     
@@ -1692,6 +1771,37 @@ window.extractFusionMatricesFromDescription = extractFusionMatricesFromDescripti
             showMessage('❌ خطا در ادغام', '#e74c3c');
           }
         } else {
+            
+            // 🔄 ذخیره در Supabase (آپ شیون 1)
+const userId = localStorage.getItem('fibotic_user_id') || null;
+const backendId = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+
+try {
+    const { data: sbData, error: sbError } = await supabase
+        .from('reports')
+        .insert([{
+            text: project,
+            project_code: fullCode || null,
+            description: description + fusionInfo,
+            drawing: JSON.stringify(itemData),
+            images: images,
+            date: date,
+            backend_id: backendId,
+            timestamp: Date.now(),
+            user_id: userId && userId !== 'admin' ? parseInt(userId) : null
+        }])
+        .select();
+
+    if (sbError) {
+        console.warn('⚠️ هشدار Supabase:', sbError.message);
+    } else {
+        console.log('✅ گزارش در Supabase ذخیره شد');
+    }
+} catch (e) {
+    console.error('❌ خطا در Supabase:', e);
+}
+
+// 💾 سپس ذخیره محلی
           // ذخیره طرح جدید
           await safeCreate({ 
             type: 'dailyReport', 
@@ -4351,7 +4461,46 @@ function viewImageFullScreen(imageSrc, chapterTitle) {
     // Attach date auto-format to dateInput (دفترچه)
     attachDateAutoFormat(document.getElementById('dateInput'));
   }
+async function loadDataFromSupabase() {
+    try {
+        const userId = localStorage.getItem('fibotic_user_id');
+        if (!userId) return;
 
+        // بارگیری حضور و غیاب
+        const { data: attendance, error: attError } = await supabase
+            .from('attendance')
+            .select('*')
+            .eq('user_id', parseInt(userId));
+
+        if (attendance && !attError) {
+            attendance.forEach(item => {
+                item.type = 'attendance';
+                item.__backendId = item.backend_id;
+            });
+        }
+
+        // بارگیری گزارش‌ها
+        const { data: reports, error: repError } = await supabase
+            .from('reports')
+            .select('*')
+            .eq('user_id', parseInt(userId));
+
+        if (reports && !repError) {
+            reports.forEach(item => {
+                item.type = 'dailyReport';
+                item.__backendId = item.backend_id;
+                item.drawing = typeof item.drawing === 'string' ? item.drawing : JSON.stringify(item.drawing);
+            });
+        }
+
+        console.log('✅ داده‌ها از Supabase بارگذاری شد');
+    } catch (e) {
+        console.error('❌ خطا در بارگیری:', e);
+    }
+}
+
+// اجرا در ورود
+// loadDataFromSupabase();
   function initApp() {
     try {
       initDataFromStorage();
@@ -4686,23 +4835,9 @@ window.openPage = function(id) {
 };
 })(); // end IIFE
 
-// ۱. تعریف متغیرهای اصلی - با استفاده از localStorage محلی و URL
+// ۱. تعریف متغیرهای اصلی (حتما در ابتدای اسکریپت باشد)
 function getAdminCredentials() {
   try {
-    // ابتدا از URL سرچ کنید
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('admin_user') && urlParams.has('admin_pass')) {
-      const user = urlParams.get('admin_user');
-      const pass = urlParams.get('admin_pass');
-      // ذخیره کن تا دفعه بعد کار کند
-      localStorage.setItem('fibotic_admin_creds', JSON.stringify({ user: user, pass: pass }));
-      // URL را تمیز کن (برای امنیت)
-      window.history.replaceState({}, document.title, window.location.pathname);
-      console.log('✅ اطلاعات admin از URL بارگذاری شد');
-      return { user: user, pass: pass };
-    }
-    
-    // اگر در URL نبود، از localStorage استفاده کن
     const stored = JSON.parse(localStorage.getItem('fibotic_admin_creds') || '{}');
     return {
       user: stored.user || "admin",
@@ -4732,10 +4867,69 @@ Object.defineProperty(window, 'ADMIN_PASS', {
 });
 
 // تابع ورود
-function login() {
+async function login() {
     try {
         var u = document.getElementById('loginUser').value.trim();
         var p = document.getElementById('loginPass').value.trim();
+
+        if (!u || !p) {
+            alert('لطفاً نام کاربری و رمز عبور را وارد کنید');
+            return;
+        }
+
+        // 🔄 بررسی در Supabase
+        const { data: userData, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('username', u)
+            .single();
+
+        if (error || !userData) {
+            // فول‌بک: بررسی مدیر یا کاربران محلی
+            if (u === ADMIN_USER && p === ADMIN_PASS) {
+                localStorage.setItem('fibotic_logged_in', 'admin');
+                localStorage.setItem('fibotic_role', 'admin');
+                localStorage.setItem('fibotic_user_id', 'admin');
+                finishLogin();
+                return;
+            }
+            
+            var users = JSON.parse(localStorage.getItem('fibotic_users_v2') || '{}');
+            if (users[u] && users[u].password === p) {
+                localStorage.setItem('fibotic_logged_in', u);
+                localStorage.setItem('fibotic_role', 'user');
+                finishLogin();
+                return;
+            }
+            
+            alert('❌ نام کاربری یا رمز اشتباه است.');
+            return;
+        }
+
+        // ✅ بررسی رمز
+        if (userData.password !== p) {
+            alert('❌ رمز اشتباه است.');
+            return;
+        }
+
+        // ✅ بررسی انقضاء
+        var now = Date.now();
+        if (now > userData.expiry) {
+            alert('❌ اعتبار حساب شما تمام شده است.');
+            return;
+        }
+
+        // ✅ ورود موفق
+        localStorage.setItem('fibotic_logged_in', u);
+        localStorage.setItem('fibotic_role', userData.role || 'user');
+        localStorage.setItem('fibotic_user_id', userData.id);
+        finishLogin();
+
+    } catch (e) {
+        console.error("خطا در ورود:", e);
+        alert("❌ مشکلی پیش آمد. کنسول مرورگر را بررسی کنید.");
+    }
+}
 
         if (!u || !p) {
             alert('لطفاً نام کاربری و رمز عبور را وارد کنید');
@@ -4837,37 +5031,56 @@ function refreshUserList() {
 }
 
 // create user from admin panel
-function adminCreateUser() {
+async function adminCreateUser() {
     try {
         var username = (document.getElementById('newUserName')?.value || '').trim();
         var password = (document.getElementById('newUserPass')?.value || '').trim();
         var days = parseInt(document.getElementById('newUserDays')?.value || '0', 10);
+        
         if (!username || !password || !days || days <= 0) {
             alert('لطفاً نام کاربری، رمز و تعداد روز اعتبار معتبر وارد کنید');
             return;
         }
-        var users = JSON.parse(localStorage.getItem('fibotic_users_v2') || '{}');
-        if (users[username]) {
-            alert('این نام کاربری قبلاً وجود دارد');
+
+        // 🔄 ثبت در Supabase
+        const expiry = Date.now() + (days * 24 * 3600 * 1000);
+        
+        const { data, error } = await supabase
+            .from('users')
+            .insert([{
+                username: username,
+                password: password,
+                expiry: expiry,
+                role: 'user'
+            }])
+            .select();
+
+        if (error) {
+            if (error.message.includes('duplicate')) {
+                alert('❌ این نام کاربری قبلاً وجود دارد');
+            } else {
+                alert('❌ خطا: ' + error.message);
+            }
             return;
         }
-        var expiry = Date.now() + (days * 24 * 3600 * 1000);
+
+        // 💾 ذخیره محلی برای سازگاری
+        var users = JSON.parse(localStorage.getItem('fibotic_users_v2') || '{}');
         users[username] = { password: password, expiry: expiry };
         localStorage.setItem('fibotic_users_v2', JSON.stringify(users));
-        // refresh UI
+
+        // 🔄 بروزرسانی صفحه
         refreshUserList();
-        // clear inputs
         document.getElementById('newUserName').value = '';
         document.getElementById('newUserPass').value = '';
         document.getElementById('newUserDays').value = '';
-        // refresh person select for everyone
+        
         if (typeof loadPersonList === 'function') loadPersonList();
-        // feedback
         if (typeof showMessage === 'function') showMessage('✅ کاربر ایجاد و فعال شد', '#27ae60');
-        else alert('کاربر ایجاد و فعال شد');
+
     } catch (e) {
         console.error('adminCreateUser error', e);
-        alert('خطا در ایجاد کاربر - کنسول را بررسی کنید');
+        alert('❌ خطا در ایجاد کاربر');
     }
 }
 window.adminCreateUser = adminCreateUser;
@@ -5176,71 +5389,50 @@ window.addEventListener('popstate', function() {
 
 // ===== تغییر رمز مدیریت - کد تصحیح شده =====
 
-function changeAdminCredentials() {
-  try {
-    const newUser = (document.getElementById('newAdminUser')?.value || '').trim();
-    const newPass = (document.getElementById('newAdminPass')?.value || '').trim();
+async function changeAdminCredentials() {
+    const newUser = document.getElementById('newAdminUser').value.trim();
+    const newPass = document.getElementById('newAdminPass').value.trim();
     const statusEl = document.getElementById('adminCredsStatus');
-    
-    console.log('🔍 تابع changeAdminCredentials اجرا شد'); // برای بررسی
-    
-    if (!statusEl) {
-      console.error('❌ adminCredsStatus element not found');
-      alert('❌ عنصر وضعیت پیدا نشد');
-      return;
-    }
-    
-    // بررسی خالی بودن فیلدها
+
     if (!newUser || !newPass) {
-      statusEl.innerHTML = '<span style="color:#fff">⚠️ نام کاربری و رمز الزامی است</span>';
-      console.warn('⚠️ فیلدها خالی هستند');
-      return;
+        statusEl.innerHTML = '<span style="color:#fff">⚠️ هر دو فیلد الزامی است</span>';
+        return;
     }
 
-    // بررسی طول رمز
-    if (newPass.length < 4) {
-      statusEl.innerHTML = '<span style="color:#fff">⚠️ رمز باید حداقل 4 کاراکتر باشد</span>';
-      return;
+    if (!confirm('رمز جدید: ' + newUser + ' / ' + newPass + '\n\nتأیید می‌کنید؟')) {
+        return;
     }
 
-    // بررسی تأیید
-    const confirmMsg = `آیا مطمئن هستید؟\n\nنام کاربری جدید: ${newUser}\nرمز جدید: ${newPass}\n\n⚠️ بعد از این تغییر با رمز جدید وارد شوید!`;
-    if (!confirm(confirmMsg)) {
-      console.log('❌ کاربر انصراف داد');
-      return;
-    }
+    try {
+        // 🔄 به‌روزرسانی در Supabase
+        const { error } = await supabase
+            .from('users')
+            .update({
+                username: newUser,
+                password: newPass,
+                role: 'admin'
+            })
+            .eq('username', ADMIN_USER);
 
-    // ذخیره رمز جدید
-    console.log('💾 ذخیره رمز جدید...');
-    if (setAdminCredentials(newUser, newPass)) {
-      console.log('✅ رمز ذخیره شد');
-      statusEl.innerHTML = '<span style="color:#fff;font-weight:700">✅ رمز با موفقیت تغییر کرد! لطفاً صفحه را تازه کنید</span>';
-      
-      // پاک کردن فیلدها
-      document.getElementById('newAdminUser').value = '';
-      document.getElementById('newAdminPass').value = '';
+        if (error) {
+            statusEl.innerHTML = '<span style="color:#fff">❌ خطا: ' + error.message + '</span>';
+            return;
+        }
 
-      // نمایش پیام موفقیت
-      if (typeof showMessage === 'function') {
-        showMessage('✅ رمز تغییر کرد. لطفاً دوباره وارد شوید', '#27ae60');
-      }
+        // 💾 ذخیره محلی
+        setAdminCredentials(newUser, newPass);
+        statusEl.innerHTML = '<span style="color:#fff;font-weight:bold;">✅ رمز ذخیره شد!</span>';
+        
+        document.getElementById('newAdminUser').value = '';
+        document.getElementById('newAdminPass').value = '';
 
-      // بعد از 3 ثانیه، صفحه را تازه کن
-      setTimeout(() => {
-        console.log('🔄 صفحه تازه می‌شود...');
-        location.reload();
-      }, 3000);
-    } else {
-      console.error('❌ خطا در setAdminCredentials');
-      statusEl.innerHTML = '<span style="color:#fff">❌ خطا در ذخیره</span>';
+        alert('✅ رمز تغییر کرد!\n\nلطفاً دوباره وارد شوید.');
+        setTimeout(() => location.reload(), 2000);
+
+    } catch (e) {
+        console.error('Error:', e);
+        statusEl.innerHTML = '<span style="color:#fff">❌ خطا</span>';
     }
-  } catch (e) {
-    console.error('❌ changeAdminCredentials error:', e);
-    const statusEl = document.getElementById('adminCredsStatus');
-    if (statusEl) {
-      statusEl.innerHTML = '<span style="color:#fff">❌ خطا: ' + e.message + '</span>';
-    }
-  }
 }
 
 // اتصال دکمه - روش بهبود شده
@@ -5346,6 +5538,20 @@ setTimeout(() => {
   }
 }, 500);
 
+</script>
+<!-- Supabase Library -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- Supabase Integration Script -->
+<script>
+// تنظیمات Supabase
+const SUPABASE_URL = 'https://exquwrmmonvqfqmlxivn.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_tPu96OA47rkTRVXPfYLiZw_pS5RvqSe';
+
+// ایجاد کلاینت Supabase
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+console.log('✅ Supabase متصل شد');
 </script>
 </body>
 </html>
