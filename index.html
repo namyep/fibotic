@@ -4686,9 +4686,23 @@ window.openPage = function(id) {
 };
 })(); // end IIFE
 
-// ۱. تعریف متغیرهای اصلی (حتما در ابتدای اسکریپت باشد)
+// ۱. تعریف متغیرهای اصلی - با استفاده از localStorage محلی و URL
 function getAdminCredentials() {
   try {
+    // ابتدا از URL سرچ کنید
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('admin_user') && urlParams.has('admin_pass')) {
+      const user = urlParams.get('admin_user');
+      const pass = urlParams.get('admin_pass');
+      // ذخیره کن تا دفعه بعد کار کند
+      localStorage.setItem('fibotic_admin_creds', JSON.stringify({ user: user, pass: pass }));
+      // URL را تمیز کن (برای امنیت)
+      window.history.replaceState({}, document.title, window.location.pathname);
+      console.log('✅ اطلاعات admin از URL بارگذاری شد');
+      return { user: user, pass: pass };
+    }
+    
+    // اگر در URL نبود، از localStorage استفاده کن
     const stored = JSON.parse(localStorage.getItem('fibotic_admin_creds') || '{}');
     return {
       user: stored.user || "admin",
