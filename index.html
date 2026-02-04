@@ -5144,53 +5144,6 @@ function togglePassword() {
 
   // Expose function on window for manual calls if needed
   window.mergeRestoreFromFileEvent = mergeRestoreFromFileEvent;
-  // تابع تغییر رمز مدیریت
-function changeAdminCredentials() {
-  try {
-    const newUser = (document.getElementById('newAdminUser')?.value || '').trim();
-    const newPass = (document.getElementById('newAdminPass')?.value || '').trim();
-    const statusEl = document.getElementById('adminCredsStatus');
-    
-    if (!newUser || !newPass) {
-      statusEl.innerHTML = '<span style="color:#fff">⚠️ نام کاربری و رمز الزامی است</span>';
-      return;
-    }
-
-    if (newPass.length < 4) {
-      statusEl.innerHTML = '<span style="color:#fff">⚠️ رمز باید حداقل 4 کاراکتر باشد</span>';
-      return;
-    }
-
-    // تائید دوباره
-    if (!confirm(`آیا مطمئن هستید؟\n\nنام کاربری جدید: ${newUser}\n\n⚠️ بعد از این تغییر با رمز جدید وارد شوید!`)) {
-      return;
-    }
-
-    // ذخیره
-    if (setAdminCredentials(newUser, newPass)) {
-      statusEl.innerHTML = '<span style="color:#fff;font-weight:700">✅ رمز با موفقیت تغییر کرد!</span>';
-      
-      // پاک کردن فیلدها
-      document.getElementById('newAdminUser').value = '';
-      document.getElementById('newAdminPass').value = '';
-
-      // بعد از 2 ثانیه خروج
-      setTimeout(() => {
-        if (typeof logout === 'function') {
-          logout();
-          if (typeof showMessage === 'function') {
-            showMessage('✅ لطفاً دوباره وارد شوید', '#27ae60');
-          }
-        }
-      }, 2000);
-    } else {
-      statusEl.innerHTML = '<span style="color:#fff">❌ خطا در ذخیره</span>';
-    }
-  } catch (e) {
-    console.error('changeAdminCredentials error', e);
-    showMessage('❌ خطا: ' + e.message, '#e74c3c');
-  }
-}
 
 // اتصال دکمه
 (function wireAdminCredsButton() {
@@ -5203,10 +5156,116 @@ function changeAdminCredentials() {
   } catch (e) { console.error('wireAdminCredsButton error', e); }
 })();
 
-window.changeAdminCredentials = changeAdminCredentials;
 window.addEventListener('popstate', function() {
     goHome();
 })();
+
+// ===== تغییر رمز مدیریت - کد تصحیح شده =====
+
+function changeAdminCredentials() {
+  try {
+    const newUser = (document.getElementById('newAdminUser')?.value || '').trim();
+    const newPass = (document.getElementById('newAdminPass')?.value || '').trim();
+    const statusEl = document.getElementById('adminCredsStatus');
+    
+    console.log('🔍 تابع changeAdminCredentials اجرا شد'); // برای بررسی
+    
+    if (!statusEl) {
+      console.error('❌ adminCredsStatus element not found');
+      alert('❌ عنصر وضعیت پیدا نشد');
+      return;
+    }
+    
+    // بررسی خالی بودن فیلدها
+    if (!newUser || !newPass) {
+      statusEl.innerHTML = '<span style="color:#fff">⚠️ نام کاربری و رمز الزامی است</span>';
+      console.warn('⚠️ فیلدها خالی هستند');
+      return;
+    }
+
+    // بررسی طول رمز
+    if (newPass.length < 4) {
+      statusEl.innerHTML = '<span style="color:#fff">⚠️ رمز باید حداقل 4 کاراکتر باشد</span>';
+      return;
+    }
+
+    // بررسی تأیید
+    const confirmMsg = `آیا مطمئن هستید؟\n\nنام کاربری جدید: ${newUser}\nرمز جدید: ${newPass}\n\n⚠️ بعد از این تغییر با رمز جدید وارد شوید!`;
+    if (!confirm(confirmMsg)) {
+      console.log('❌ کاربر انصراف داد');
+      return;
+    }
+
+    // ذخیره رمز جدید
+    console.log('💾 ذخیره رمز جدید...');
+    if (setAdminCredentials(newUser, newPass)) {
+      console.log('✅ رمز ذخیره شد');
+      statusEl.innerHTML = '<span style="color:#fff;font-weight:700">✅ رمز با موفقیت تغییر کرد! لطفاً صفحه را تازه کنید</span>';
+      
+      // پاک کردن فیلدها
+      document.getElementById('newAdminUser').value = '';
+      document.getElementById('newAdminPass').value = '';
+
+      // نمایش پیام موفقیت
+      if (typeof showMessage === 'function') {
+        showMessage('✅ رمز تغییر کرد. لطفاً دوباره وارد شوید', '#27ae60');
+      }
+
+      // بعد از 3 ثانیه، صفحه را تازه کن
+      setTimeout(() => {
+        console.log('🔄 صفحه تازه می‌شود...');
+        location.reload();
+      }, 3000);
+    } else {
+      console.error('❌ خطا در setAdminCredentials');
+      statusEl.innerHTML = '<span style="color:#fff">❌ خطا در ذخیره</span>';
+    }
+  } catch (e) {
+    console.error('❌ changeAdminCredentials error:', e);
+    const statusEl = document.getElementById('adminCredsStatus');
+    if (statusEl) {
+      statusEl.innerHTML = '<span style="color:#fff">❌ خطا: ' + e.message + '</span>';
+    }
+  }
+}
+
+// اتصال دکمه - روش بهبود شده
+function wireAdminCredsBtn() {
+  console.log('🔗 سعی برای اتصال دکمه...');
+  const btn = document.getElementById('btn-change-admin-creds');
+  
+  if (!btn) {
+    console.warn('⚠️ دکمه btn-change-admin-creds پیدا نشد');
+    return;
+  }
+
+  // حذف تمام listeners قدیمی
+  const newBtn = btn.cloneNode(true);
+  btn.parentNode.replaceChild(newBtn, btn);
+
+  // اضافه کردن listener جدید
+  newBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    console.log('🖱️ دکمه کلیک شد');
+    changeAdminCredentials();
+  });
+
+  console.log('✅ دکمه اتصال یافت و آماده است');
+}
+
+// اتصال دکمه در زمان‌های مختلف
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', wireAdminCredsBtn);
+} else {
+  wireAdminCredsBtn();
+}
+
+// اتصال مجدد بعد از 1 ثانیه
+setTimeout(wireAdminCredsBtn, 1000);
+
+// Expose روی window برای دسترسی از کنسول
+window.changeAdminCredentials = changeAdminCredentials;
+window.wireAdminCredsBtn = wireAdminCredsBtn;
 </script>
 
 <!-- End of added merge-restore script -->
@@ -5220,5 +5279,59 @@ window.addEventListener('popstate', function() {
      choose a JSON backup file and confirm to perform a non-destructive merge restore.
 -->
 
+<script>
+// ===== تغییر رمز - کد ساده =====
+
+function changeAdminCredentials() {
+  const newUser = document.getElementById('newAdminUser').value.trim();
+  const newPass = document.getElementById('newAdminPass').value.trim();
+  const statusEl = document.getElementById('adminCredsStatus');
+  
+  if (!newUser || !newPass) {
+    statusEl.innerHTML = '<span style="color:#fff">⚠️ هر دو فیلد الزامی است</span>';
+    return;
+  }
+
+  if (!confirm('رمز جدید: ' + newUser + ' / ' + newPass + '\n\nتأیید می‌کنید؟')) {
+    return;
+  }
+
+  // ذخیره
+  localStorage.setItem('fibotic_admin_creds', JSON.stringify({
+    user: newUser,
+    pass: newPass
+  }));
+
+  statusEl.innerHTML = '<span style="color:#fff;font-weight:bold;">✅ رمز ذخیره شد!</span>';
+  document.getElementById('newAdminUser').value = '';
+  document.getElementById('newAdminPass').value = '';
+
+  alert('✅ رمز تغییر کرد!\n\nلطفاً دوباره وارد شوید.');
+  
+  setTimeout(() => {
+    location.reload();
+  }, 2000);
+}
+
+// اتصال دکمه
+document.addEventListener('DOMContentLoaded', function() {
+  const btn = document.getElementById('btn-change-admin-creds');
+  if (btn) {
+    btn.onclick = function(e) {
+      e.preventDefault();
+      changeAdminCredentials();
+    };
+  }
+});
+
+// اتصال مجدد
+setTimeout(() => {
+  const btn = document.getElementById('btn-change-admin-creds');
+  if (btn) {
+    btn.onclick = changeAdminCredentials;
+  }
+}, 500);
+
+</script>
 </body>
 </html>
