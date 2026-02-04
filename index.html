@@ -751,11 +751,17 @@
     updateUserSummary();
   }
 };
-
-  function initDataFromStorage() {
-    try { allData = JSON.parse(localStorage.getItem(DATA_KEY) || '[]'); } catch (e) { allData = []; }
+async function initDataFromStorage() {
+    try {
+        const response = await fetch('http://localhost:3000/api/records');
+        const result = await response.json();
+        allData = result.data || [];
+    } catch (e) {
+        console.error('خطا در دریافت داده‌ها:', e);
+        allData = [];
+    }
     dataHandler.onDataChanged(allData);
-  }
+}
 
   /* safeCreate: use dataSdk.create if present, otherwise fallback */
   async function safeCreate(record) {
@@ -778,43 +784,50 @@
       return fallbackCreate(record);
     }
   }
-  function fallbackCreate(record) {
+async function fallbackCreate(record) {
     try {
-      const arr = JSON.parse(localStorage.getItem(DATA_KEY) || '[]');
-      if (!record.__backendId) record.__backendId = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-      arr.push(record);
-      localStorage.setItem(DATA_KEY, JSON.stringify(arr));
-      allData = arr;
-      if (dataHandler && typeof dataHandler.onDataChanged === 'function') dataHandler.onDataChanged(allData);
-      return { isOk: true, data: record };
-    } catch (e) { console.error('fallbackCreate error', e); return { isOk: false, error: e }; }
-  }
+        if (!record.__backendId) record.__backendId = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        
+        const response = await fetch('http://localhost:3000/api/records', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(record)
+        });
+        
+        const result = await response.json();
+        
+        if (result.isOk) {
+            await initDataFromStorage();
+            return result;
+        }
+        return { isOk: false, error: 'API error' };
+    } catch (e) {
+        console.error('fallbackCreate error', e);
+        return { isOk: false, error: e };
+    }
+}
 
   /* safeUpdate */
-  async function safeUpdate(record) {
+async function safeUpdate(record) {
     try {
-      if (window.dataSdk && typeof window.dataSdk.update === 'function') {
-        const res = await window.dataSdk.update(record);
-        if (res && res.isOk) {
-          if (typeof window.dataSdk.__getAllSync === 'function') {
-            try { allData = window.dataSdk.__getAllSync(); dataHandler.onDataChanged(allData); } catch (e) { }
-          }
-          return res;
-        } else throw res.error || new Error('update failed');
-      } else {
-        const arr = JSON.parse(localStorage.getItem(DATA_KEY) || '[]');
-        const idx = arr.findIndex(x => x.__backendId === record.__backendId);
-        if (idx !== -1) arr[idx] = record;
-        localStorage.setItem(DATA_KEY, JSON.stringify(arr));
-        allData = arr;
-        if (dataHandler && typeof dataHandler.onDataChanged === 'function') dataHandler.onDataChanged(allData);
-        return { isOk: true };
-      }
+        const response = await fetch(`http://localhost:3000/api/records/${record.__backendId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(record)
+        });
+        
+        const result = await response.json();
+        
+        if (result.isOk) {
+            await initDataFromStorage();
+            return result;
+        }
+        return { isOk: false, error: 'API error' };
     } catch (e) {
-      console.error('safeUpdate error', e);
-      return { isOk: false, error: e };
+        console.error('safeUpdate error', e);
+        return { isOk: false, error: e };
     }
-  }
+}
 
   /* topbar */
   function updateTopbar() {
@@ -1038,23 +1051,29 @@
   window.openFactoryResetModal = openFactoryResetModal;
 
   /* loadPersonList: now reads admin-created users (fibotic_users_v2) + admin */
-  function loadPersonList() {
+async function loadPersonList() {
     try {
-      const sel = document.getElementById('personSelect'); if (!sel) return;
-      const users = JSON.parse(localStorage.getItem('fibotic_users_v2') || '{}');
-      const entries = [];
-      // include admin explicitly
-      entries.push({ username: 'admin', display: 'مدیر (admin)' });
-      Object.keys(users || {}).forEach(u => entries.push({ username: u, display: u }));
-      const opts = ['<option value="">-- انتخاب کنید --</option>'].concat(entries.map(p => `<option value="${escapeHtml(p.username)}">${escapeHtml(p.display)}</option>`)).join('');
-      sel.innerHTML = opts;
-      // if someone is logged, preselect them
-      const logged = localStorage.getItem('fibotic_logged_in');
-      if (logged) {
-        sel.value = logged;
-      }
-    } catch (e) { console.error('loadPersonList error', e); }
-  }
+        const sel = document.getElementById('personSelect');
+        if (!sel) return;
+        
+        const response = await fetch('http://localhost:3000/api/users');
+        const users = await response.json();
+        
+        const entries = [];
+        entries.push({ username: 'admin', display: 'مدیر (admin)' });
+        Object.keys(users || {}).forEach(u => entries.push({ username: u, display: u }));
+        
+        const opts = ['<option value="">-- انتخاب کنید --</option>'].concat(
+            entries.map(p => `<option value="${escapeHtml(p.username)}">${escapeHtml(p.display)}</option>`)
+        ).join('');
+        sel.innerHTML = opts;
+        
+        const logged = localStorage.getItem('fibotic_logged_in');
+        if (logged) sel.value = logged;
+    } catch (e) {
+        console.error('loadPersonList error', e);
+    }
+}
   window.loadPersonList = loadPersonList;
 
   /* ---------- Attendance ---------- */
@@ -1441,21 +1460,29 @@ window.renderAdminShares = renderPendingShares;
   window.editAttendance = editAttendance;
 
   /* deleteAttendance */
-  async function deleteAttendance(id) {
+async function deleteAttendance(id) {
     try {
-      const rec = allData.find(r => r.__backendId === id);
-      const role = localStorage.getItem('fibotic_role') || '';
-      if (!rec) return;
-      // prevent non-admin deleting approved records
-      if (rec.sharedApproved && role !== 'admin') {
-        showMessage('⚠️ این رکورد توسط مدیر تأیید شده و قابل حذف نیست', '#e74c3c');
-        return;
-      }
+        const rec = allData.find(r => r.__backendId === id);
+        const role = localStorage.getItem('fibotic_role') || '';
+        if (!rec) return;
+        
+        if (rec.sharedApproved && role !== 'admin') {
+            showMessage('⚠️ این رکورد توسط مدیر تأیید شده و قابل حذف نیست', '#e74c3c');
+            return;
+        }
 
-      if (window.dataSdk && typeof window.dataSdk.delete === 'function') { if (rec) await window.dataSdk.delete(rec); }
-      else { const arr = JSON.parse(localStorage.getItem(DATA_KEY) || '[]'); const idx = arr.findIndex(x => x.__backendId === id); if (idx !== -1) { arr.splice(idx, 1); localStorage.setItem(DATA_KEY, JSON.stringify(arr)); dataHandler.onDataChanged(arr); } }
-      showMessage('✅ حذف شد', '#27ae60');
-    } catch (e) { console.error(e); showMessage('❌ خطا', '#e74c3c'); }
+        const response = await fetch(`http://localhost:3000/api/records/${id}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            await initDataFromStorage();
+            showMessage('✅ حذف شد', '#27ae60');
+        }
+    } catch (e) {
+        console.error(e);
+        showMessage('❌ خطا', '#e74c3c');
+    }
   }
   window.deleteAttendance = deleteAttendance;
 
@@ -2043,11 +2070,34 @@ window.editReport = editReport;
      - Paid column in table is clickable: opens viewPayoutsForUser modal showing detailed payouts and CSV export
   */
 
-  function loadPayrollData() {
+async function loadPayrollData() {
     try {
-      return JSON.parse(localStorage.getItem('fibotic_payroll_v1') || '{"employees":{},"payouts":[]}');
-    } catch (e) { return { employees: {}, payouts: [] }; }
-  }
+        const response = await fetch('http://localhost:3000/api/records?type=payroll');
+        const result = await response.json();
+        
+        const payroll = { employees: {}, payouts: [] };
+        
+        // محتوای جدول payroll را فیلتر کن
+        (result.data || []).forEach(item => {
+            if (item.type === 'payroll_rate') {
+                payroll.employees[item.employee] = { hourly: item.hourly_rate };
+            } else if (item.type === 'payroll_payout') {
+                payroll.payouts.push({
+                    employee: item.employee,
+                    amount: item.amount,
+                    date: item.date,
+                    notes: item.notes,
+                    timestamp: new Date(item.created_at).getTime()
+                });
+            }
+        });
+        
+        return payroll;
+    } catch (e) {
+        console.error('loadPayrollData error', e);
+        return { employees: {}, payouts: [] };
+    }
+}
   function savePayrollData(data) {
     try {
       localStorage.setItem('fibotic_payroll_v1', JSON.stringify(data || { employees: {}, payouts: [] }));
@@ -4683,16 +4733,38 @@ window.openPage = function(id) {
 })(); // end IIFE
 
 // ۱. تعریف متغیرهای اصلی (حتما در ابتدای اسکریپت باشد)
-function getAdminCredentials() {
-  try {
-    const stored = JSON.parse(localStorage.getItem('fibotic_admin_creds') || '{}');
-    return {
-      user: stored.user || "admin",
-      pass: stored.pass || "1234"
-    };
-  } catch (e) {
-    return { user: "admin", pass: "1234" };
-  }
+let __cachedAdminCreds = null;
+let __adminCredsLoaded = false;
+
+async function getAdminCredentials() {
+    if (__adminCredsLoaded && __cachedAdminCreds) {
+        return __cachedAdminCreds;
+    }
+    
+    try {
+        const response = await fetch('http://localhost:3000/api/admin-creds');
+        const creds = await response.json();
+        __cachedAdminCreds = {
+            user: creds.user || "admin",
+            pass: creds.pass || "1234"
+        };
+        __adminCredsLoaded = true;
+        return __cachedAdminCreds;
+    } catch (e) {
+        console.error('getAdminCredentials error', e);
+        return { user: "admin", pass: "1234" };
+    }
+}
+
+function setAdminCredentials(user, pass) {
+    return fetch('http://localhost:3000/api/admin-creds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user, pass })
+    }).then(r => {
+        __adminCredsLoaded = false;
+        return r.ok;
+    });
 }
 
 function setAdminCredentials(user, pass) {
@@ -4791,11 +4863,13 @@ function showAdminTab(show) {
 }
 
 // تابع رفرش لیست کاربران
-function refreshUserList() {
+async function refreshUserList() {
     try {
-        var users = JSON.parse(localStorage.getItem('fibotic_users_v2') || '{}');
-        var tbody = document.getElementById('userTableBody');
+        const response = await fetch('http://localhost:3000/api/users');
+        const users = await response.json();
+        const tbody = document.getElementById('userTableBody');
         if (!tbody) return;
+        
         tbody.innerHTML = '';
         Object.keys(users).forEach(function(user){
             var tr = document.createElement('tr');
@@ -4805,7 +4879,7 @@ function refreshUserList() {
                          + '<td style="padding:8px;border:1px solid #ddd;"><button class="smallBtn" data-user="'+ encodeURIComponent(user) +'">حذف</button></td>';
             tbody.appendChild(tr);
         });
-        // attach delete handlers
+        
         tbody.querySelectorAll('button[data-user]').forEach(function(btn){
             btn.addEventListener('click', function(){
                 var u = decodeURIComponent(btn.dataset.user);
@@ -4819,34 +4893,33 @@ function refreshUserList() {
 }
 
 // create user from admin panel
-function adminCreateUser() {
+async function adminCreateUser() {
     try {
         var username = (document.getElementById('newUserName')?.value || '').trim();
         var password = (document.getElementById('newUserPass')?.value || '').trim();
         var days = parseInt(document.getElementById('newUserDays')?.value || '0', 10);
+        
         if (!username || !password || !days || days <= 0) {
             alert('لطفاً نام کاربری، رمز و تعداد روز اعتبار معتبر وارد کنید');
             return;
         }
-        var users = JSON.parse(localStorage.getItem('fibotic_users_v2') || '{}');
-        if (users[username]) {
-            alert('این نام کاربری قبلاً وجود دارد');
-            return;
+        
+        const expiry = Date.now() + (days * 24 * 3600 * 1000);
+        
+        const response = await fetch('http://localhost:3000/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, expiry })
+        });
+        
+        if (response.ok) {
+            refreshUserList();
+            document.getElementById('newUserName').value = '';
+            document.getElementById('newUserPass').value = '';
+            document.getElementById('newUserDays').value = '';
+            if (typeof loadPersonList === 'function') loadPersonList();
+            if (typeof showMessage === 'function') showMessage('✅ کاربر ایجاد و فعال شد', '#27ae60');
         }
-        var expiry = Date.now() + (days * 24 * 3600 * 1000);
-        users[username] = { password: password, expiry: expiry };
-        localStorage.setItem('fibotic_users_v2', JSON.stringify(users));
-        // refresh UI
-        refreshUserList();
-        // clear inputs
-        document.getElementById('newUserName').value = '';
-        document.getElementById('newUserPass').value = '';
-        document.getElementById('newUserDays').value = '';
-        // refresh person select for everyone
-        if (typeof loadPersonList === 'function') loadPersonList();
-        // feedback
-        if (typeof showMessage === 'function') showMessage('✅ کاربر ایجاد و فعال شد', '#27ae60');
-        else alert('کاربر ایجاد و فعال شد');
     } catch (e) {
         console.error('adminCreateUser error', e);
         alert('خطا در ایجاد کاربر - کنسول را بررسی کنید');
@@ -4855,12 +4928,13 @@ function adminCreateUser() {
 window.adminCreateUser = adminCreateUser;
 
 // delete user helper
-function deleteUser(username) {
+async function deleteUser(username) {
     try {
-        var users = JSON.parse(localStorage.getItem('fibotic_users_v2') || '{}');
-        if (users[username]) {
-            delete users[username];
-            localStorage.setItem('fibotic_users_v2', JSON.stringify(users));
+        const response = await fetch(`http://localhost:3000/api/users/${username}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
             refreshUserList();
             if (typeof loadPersonList === 'function') loadPersonList();
             if (typeof showMessage === 'function') showMessage('✅ کاربر حذف شد', '#27ae60');
